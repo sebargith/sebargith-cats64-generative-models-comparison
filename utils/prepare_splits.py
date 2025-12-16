@@ -6,11 +6,8 @@ def main():
     random_seed = 42
     random.seed(random_seed)
 
-    # Ajusta esto al nombre real de la carpeta donde quedaron las imágenes
+    # carpeta donde quedaron las imágenes
     raw_root = Path("data/raw")
-    # Si tienes una carpeta específica, por ejemplo "Cat_Dataset", haz:
-    # images_root = raw_root / "Cat_Dataset"
-    # y si están todas sueltas en raw_root, deja raw_root
     images_root = raw_root
 
     exts = {".jpg", ".jpeg", ".png"}
