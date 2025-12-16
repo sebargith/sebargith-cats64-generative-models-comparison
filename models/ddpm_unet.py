@@ -52,3 +52,40 @@ class ResidualBlock(nn.Module):
         h = h + time_out[:, :, None, None]
         h = self.conv2(self.act2(self.norm2(h)))
         return h + self.shortcut(x)
+    
+    # models/ddpm_unet.py (2/3)
+class DownBlock(nn.Module):
+    """
+    Dos bloques residuales + Downsample por Conv(stride=2).
+    Devuelve (downsampled, skip) donde skip es la feature antes de hacer downsample.
+    """
+    def __init__(self, in_ch: int, out_ch: int, time_emb_dim: int):
+        super().__init__()
+        self.res1 = ResidualBlock(in_ch, out_ch, time_emb_dim)
+        self.res2 = ResidualBlock(out_ch, out_ch, time_emb_dim)
+        self.down = nn.Conv2d(out_ch, out_ch, 4, stride=2, padding=1)
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor):
+        x = self.res1(x, t_emb)
+        x = self.res2(x, t_emb)
+        down = self.down(x)
+        return down, x  # down: resolución /2, x: skip connection
+
+
+class UpBlock(nn.Module):
+    """
+    Upsample por ConvTranspose2d + concat con skip + dos ResBlocks.
+    """
+    def __init__(self, in_ch: int, out_ch: int, skip_ch: int, time_emb_dim: int):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, out_ch, 4, stride=2, padding=1)
+        self.res1 = ResidualBlock(out_ch + skip_ch, out_ch, time_emb_dim)
+        self.res2 = ResidualBlock(out_ch, out_ch, time_emb_dim)
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        x = self.up(x)
+        x = torch.cat([x, skip], dim=1)
+        x = self.res1(x, t_emb)
+        x = self.res2(x, t_emb)
+        return x
+
