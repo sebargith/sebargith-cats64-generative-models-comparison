@@ -1,4 +1,4 @@
-# models/ddpm_unet.py (1/3)
+# models/ddpm_unet.py
 import math
 import torch
 import torch.nn as nn
@@ -52,8 +52,8 @@ class ResidualBlock(nn.Module):
         h = h + time_out[:, :, None, None]
         h = self.conv2(self.act2(self.norm2(h)))
         return h + self.shortcut(x)
-    
-    # models/ddpm_unet.py (2/3)
+
+
 class DownBlock(nn.Module):
     """
     Dos bloques residuales + Downsample por Conv(stride=2).
@@ -78,7 +78,9 @@ class UpBlock(nn.Module):
     """
     def __init__(self, in_ch: int, out_ch: int, skip_ch: int, time_emb_dim: int):
         super().__init__()
+        # Primero upsample de (H,W) -> (2H,2W)
         self.up = nn.ConvTranspose2d(in_ch, out_ch, 4, stride=2, padding=1)
+        # Luego concatenamos skip y pasamos por ResBlocks
         self.res1 = ResidualBlock(out_ch + skip_ch, out_ch, time_emb_dim)
         self.res2 = ResidualBlock(out_ch, out_ch, time_emb_dim)
 
@@ -89,3 +91,81 @@ class UpBlock(nn.Module):
         x = self.res2(x, t_emb)
         return x
 
+
+class UNetDDPM(nn.Module):
+    """
+    U-Net ligera para DDPM en imágenes 64x64x3.
+    Predice el ruido ε dado x_t y t.
+    """
+    def __init__(self, img_channels: int = 3, base_channels: int = 64, time_emb_dim: int = 256):
+        super().__init__()
+
+        # Embedding de tiempo
+        self.time_mlp = nn.Sequential(
+            SinusoidalPosEmb(time_emb_dim),
+            nn.Linear(time_emb_dim, time_emb_dim * 4),
+            nn.SiLU(),
+            nn.Linear(time_emb_dim * 4, time_emb_dim),
+        )
+
+        # Primera conv
+        self.init_conv = nn.Conv2d(img_channels, base_channels, 3, padding=1)
+
+        # Down: 64x64 -> 32 -> 16 -> 8
+        self.down1 = DownBlock(base_channels, base_channels, time_emb_dim)           # 3 -> 64, 64x64 -> 32x32
+        self.down2 = DownBlock(base_channels, base_channels * 2, time_emb_dim)       # 64 -> 128, 32x32 -> 16x16
+        self.down3 = DownBlock(base_channels * 2, base_channels * 4, time_emb_dim)   # 128 -> 256, 16x16 -> 8x8
+
+        # Bottleneck
+        self.bot1 = ResidualBlock(base_channels * 4, base_channels * 4, time_emb_dim)
+        self.bot2 = ResidualBlock(base_channels * 4, base_channels * 4, time_emb_dim)
+
+        # Up: 8x8 -> 16 -> 32 -> 64
+        self.up3 = UpBlock(
+            in_ch=base_channels * 4,
+            out_ch=base_channels * 4,
+            skip_ch=base_channels * 4,
+            time_emb_dim=time_emb_dim,
+        )  # concat con skip3 (256 canales)
+
+        self.up2 = UpBlock(
+            in_ch=base_channels * 4,
+            out_ch=base_channels * 2,
+            skip_ch=base_channels * 2,
+            time_emb_dim=time_emb_dim,
+        )  # concat con skip2 (128 canales)
+
+        self.up1 = UpBlock(
+            in_ch=base_channels * 2,
+            out_ch=base_channels,
+            skip_ch=base_channels,
+            time_emb_dim=time_emb_dim,
+        )  # concat con skip1 (64 canales)
+
+        # Salida
+        self.final_norm = nn.GroupNorm(8, base_channels)
+        self.final_act = nn.SiLU()
+        self.final_conv = nn.Conv2d(base_channels, img_channels, 3, padding=1)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        x: (N, 3, 64, 64) en [-1, 1]
+        t: (N,) long/int, pasos de 0 a T-1
+        """
+        t_emb = self.time_mlp(t)  # (N, time_emb_dim)
+
+        x = self.init_conv(x)
+        d1, s1 = self.down1(x, t_emb)   # d1: 32x32, s1: 64x64
+        d2, s2 = self.down2(d1, t_emb)  # d2: 16x16, s2: 32x32
+        d3, s3 = self.down3(d2, t_emb)  # d3: 8x8,  s3: 16x16
+
+        b = self.bot1(d3, t_emb)
+        b = self.bot2(b, t_emb)
+
+        u3 = self.up3(b, s3, t_emb)     # 8 -> 16
+        u2 = self.up2(u3, s2, t_emb)    # 16 -> 32
+        u1 = self.up1(u2, s1, t_emb)    # 32 -> 64
+
+        out = self.final_conv(self.final_act(self.final_norm(u1)))
+        # out ≈ ruido ε predicho, misma forma que x
+        return out
