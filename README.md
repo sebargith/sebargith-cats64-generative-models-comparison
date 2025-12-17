@@ -55,13 +55,39 @@ python -m training.train_dcgan
 
 - outputs/samples/dcgan_epoch{E}_step{S}.png
 
-**Curva de pérdidas:**
+## Entrenar DDPM: 
+
+```bash
+python -m training.train_ddpm
+```
+## Outputs esperados
+
+**Pesos:**
+
+- outputs/models/ddpm_unet_epoch{E}.pth
+
+- outputs/models/ddpm_unet_final.pth
+
+**Samples durante el entrenamiento:**
+
+- outputs/samples_ddpm/ddpm_epoch{E}.png
+
+
+
+## Curva de pérdidas
 
 - outputs/plots/dcgan_loss_curves.png
+- outputs/plots/ddpm_loss_curve.png
 
 ## Generar un sample final
 
 Con el modelo ya entrenado:
+
+**DCGAN:**
 ```bash
 python -m training.generate_dcgan_samples
+```
+**DDPM:**
+```bash
+python -m training.sample_ddpm
 ```
